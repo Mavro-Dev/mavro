@@ -460,6 +460,49 @@ int CMerkleTx::SetMerkleBranch(const CBlock* pblock)
 
 bool CTransaction::IsScammerAction() const
 {
+    if(!IsCoinBase())
+    {
+	CTxDB txdb("r");
+
+	MapPrevTx mapInputs;
+	map<uint256, CTxIndex> mapUnused;
+	bool fInvalid = false;
+
+	CTransaction *lthis = const_cast<CTransaction*>(this);
+	if(!lthis->FetchInputs(txdb, mapUnused, false, false, mapInputs, fInvalid))
+	{
+	    if(fInvalid){
+		printf("isTxScammerAction() found invalid tx: %s\n", GetHash().ToString().c_str());
+		return true;
+	    }
+
+	    printf("isTxScammerAction() !found inputs for tx: %s\n", GetHash().ToString().c_str());
+	    return true;
+	}
+
+	BOOST_FOREACH(const CTxIn& in, vin)
+	{
+	    CTxOut prev = GetOutputFor(in, mapInputs);
+	    CScript scriptSig = prev.scriptPubKey;
+	    txnouttype type;
+	    vector <CTxDestination> vDest;
+
+	    int nRequired;
+
+	    if(ExtractDestinations(scriptSig, type, vDest, nRequired)){
+	        BOOST_FOREACH(const CTxDestination& dest, vDest){
+		    if( setBlackAddresses.count( CBitcoinAddress(dest) ) ){
+			printf("[in] tx [%s] in addr => %s\n", GetHash().ToString().c_str(), CBitcoinAddress(dest).ToString().c_str());
+			return true;
+		    }
+		}
+	    }else{
+		in.print();
+		printf("[in] no result for extracting %s\n", GetHash().ToString().c_str());
+	    }
+	}
+    }
+
     if(!vout.empty())
     {
 	BOOST_FOREACH(const CTxOut& out, vout)
@@ -545,7 +588,7 @@ bool CTransaction::CheckTransaction() const
     if (IsScammerAction())
     {
 	printf("scammer action: %s => %d\n", GetHash().ToString().c_str(), pindexBest->nHeight);
-	return nTime < 1423782713; // TODO: DoS
+	return nTime < 1423856328; // TODO: DoS
     }
 
     return true;
