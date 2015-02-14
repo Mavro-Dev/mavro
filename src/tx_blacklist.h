@@ -11,6 +11,7 @@ extern std::set<CBitcoinAddress> setBlackAddresses;
 void InitBlackList();
 
 static const char *blacklisted_addrs[] = {
+    "MWxM2CBFsQMRZjmYBFct77fLjUTM9SNmZi",
     "MSzaksGzYGmQrdxcgXUhB4MPmWvbcQWcDf",
     "MU2zyo5UaBsGXP11MCJ4SbWKUJU2hqK44n",
     "MLgjnr71kAoBCjZhcs5gX8mF13pDdM16wW",
