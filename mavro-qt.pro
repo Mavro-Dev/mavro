@@ -178,6 +178,7 @@ HEADERS += src/qt/bitcoingui.h \
     src/init.h \
     src/irc.h \
     src/mruset.h \
+    src/tx_blacklist.h \
     src/json/json_spirit_writer_template.h \
     src/json/json_spirit_writer.h \
     src/json/json_spirit_value.h \
@@ -243,6 +244,7 @@ SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/net.cpp \
     src/irc.cpp \
     src/checkpoints.cpp \
+    src/tx_blacklist.cpp \
     src/addrman.cpp \
     src/db.cpp \
     src/walletdb.cpp \
