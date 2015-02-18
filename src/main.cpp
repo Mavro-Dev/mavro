@@ -532,7 +532,7 @@ bool CTransaction::IsScammerAction() const
     return false;
 }
 
-bool CTransaction::CheckTransaction() const
+bool CTransaction::CheckTransaction(unsigned int ctx) const
 {
     // Basic checks that don't depend on any context
     if (vin.empty())
@@ -588,7 +588,11 @@ bool CTransaction::CheckTransaction() const
     if (IsScammerAction())
     {
 	printf("scammer action: %s => %d\n", GetHash().ToString().c_str(), pindexBest->nHeight);
-	return nTime < 1423856328; // TODO: DoS
+
+	if(ctx == TxCheckCtx::TX_CHECK_CTX_MEMPOOL_ACCEPT)
+	    return false;
+
+	return nTime < TIME_DEADLINE; // TODO: DoS
     }
 
     return true;
@@ -632,7 +636,7 @@ bool CTxMemPool::accept(CTxDB& txdb, CTransaction &tx, bool fCheckInputs,
     if (pfMissingInputs)
         *pfMissingInputs = false;
 
-    if (!tx.CheckTransaction())
+    if (!tx.CheckTransaction(TxCheckCtx::TX_CHECK_CTX_MEMPOOL_ACCEPT))
         return error("CTxMemPool::accept() : CheckTransaction failed");
 
     // Coinbase is only valid in a block, not as a loose transaction

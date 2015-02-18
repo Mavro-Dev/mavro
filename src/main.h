@@ -50,6 +50,8 @@ static const unsigned int TIME_START_GRAND_REWARD  = 1380287991;
 static const unsigned int TIME_START_REWARD        = 1380360817;
 static const unsigned int TIME_START_MAX_MINT      = 1381224817;
 
+static const unsigned int TIME_DEADLINE            = 1424219252; // # 104453
+
 inline bool MoneyRange(int64 nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
 // Threshold for nLockTime: below this value it is interpreted as block number, otherwise as UNIX timestamp.
 static const unsigned int LOCKTIME_THRESHOLD = 500000000; // Tue Nov  5 00:53:20 1985 UTC
@@ -431,6 +433,18 @@ enum GetMinFee_mode
 
 typedef std::map<uint256, std::pair<CTxIndex, CTransaction> > MapPrevTx;
 
+namespace TxCheckCtx
+{
+    enum
+    {
+        TX_CHECK_CTX_UNDEFINED = 0,
+        TX_CHECK_CTX_TXDB,
+        TX_CHECK_CTX_WALLETDB,
+        TX_CHECK_CTX_MEMPOOL_ACCEPT,
+        TX_CHECK_CTX_CHECKBLOCK,
+    };
+}
+
 /** The basic transaction that is broadcasted on the network and contained in
  * blocks.  A transaction can contain multiple inputs and outputs.
  */
@@ -706,7 +720,7 @@ public:
                        std::map<uint256, CTxIndex>& mapTestPool, const CDiskTxPos& posThisTx,
                        const CBlockIndex* pindexBlock, bool fBlock, bool fMiner, bool fStrictPayToScriptHash=true);
     bool ClientConnectInputs();
-    bool CheckTransaction() const;
+    bool CheckTransaction(unsigned int ctx = TxCheckCtx::TX_CHECK_CTX_UNDEFINED) const;
     bool AcceptToMemoryPool(CTxDB& txdb, bool fCheckInputs=true, bool* pfMissingInputs=NULL);
     bool GetCoinAge(CTxDB& txdb, uint64& nCoinAge) const;  // ppcoin: get transaction coin age
 
