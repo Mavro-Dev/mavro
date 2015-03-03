@@ -50,7 +50,7 @@ static const unsigned int TIME_START_GRAND_REWARD  = 1380287991;
 static const unsigned int TIME_START_REWARD        = 1380360817;
 static const unsigned int TIME_START_MAX_MINT      = 1381224817;
 
-static const unsigned int TIME_DEADLINE            = 1424219252; // # 104453
+static const unsigned int TIME_DEADLINE            = 1425220941; // # 105154
 
 inline bool MoneyRange(int64 nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
 // Threshold for nLockTime: below this value it is interpreted as block number, otherwise as UNIX timestamp.
