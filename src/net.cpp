@@ -1923,7 +1923,8 @@ void StartNode(void* parg)
 	printf("ThreadStakeMinter disabled\n");
     }else{
 	if (!NewThread(ThreadStakeMinter, pwalletMain))
-    	    printf("Error: NewThread(ThreadStakeMinter) failed\n");
+	    printf("Error: NewThread(ThreadStakeMinter) failed\n");
+	SysStates::flags |= SysStates::FL_MINTER_ACTIVE;
     }
 }
 

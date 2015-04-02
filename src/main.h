@@ -39,11 +39,6 @@ static const int64 MAX_MINT_PROOF_OF_WORK = 10 * COIN;
 static const int64 MAX_MINT_PROOF_OF_STAKE = 1 * COIN;
 static const int64 MIN_TXOUT_AMOUNT = MIN_TX_FEE;
 
-static const unsigned int ENTROPY_SWITCH_TIME = 0;
-static const unsigned int STAKE_SWITCH_TIME = 0;
-static const unsigned int TARGETS_SWITCH_TIME = 0;
-static const unsigned int CHAINCHECKS_SWITCH_TIME = 0;
-static const unsigned int STAKECURVE_SWITCH_TIME = 0;
 static const unsigned int STAKEWEIGHT_SWITCH_TIME = 1398475427;
 
 static const unsigned int TIME_START_GRAND_REWARD  = 1380287991;
@@ -433,6 +428,22 @@ enum GetMinFee_mode
 
 typedef std::map<uint256, std::pair<CTxIndex, CTransaction> > MapPrevTx;
 
+namespace SysStates
+{
+    enum {
+	SYS_PHASE_BOOT = 0,
+	SYS_PHASE_RUN,
+	SYS_PHASE_SHUTDOWN,
+    };
+
+    enum {
+	FL_MINTER_ACTIVE = 1,
+    };
+
+    extern unsigned int phase;
+    extern unsigned int flags;
+}
+
 namespace TxCheckCtx
 {
     enum
@@ -702,7 +713,7 @@ public:
      @return	Returns true if all inputs are in txdb or mapTestPool
      */
     bool FetchInputs(CTxDB& txdb, const std::map<uint256, CTxIndex>& mapTestPool,
-                     bool fBlock, bool fMiner, MapPrevTx& inputsRet, bool& fInvalid);
+                     bool fBlock, bool fMiner, MapPrevTx& inputsRet, bool& fInvalid, bool passWOEntry = false);
 
     /** Sanity check previous transactions, then, if all checks succeed,
         mark them as spent by this transaction.
@@ -724,7 +735,7 @@ public:
     bool AcceptToMemoryPool(CTxDB& txdb, bool fCheckInputs=true, bool* pfMissingInputs=NULL);
     bool GetCoinAge(CTxDB& txdb, uint64& nCoinAge) const;  // ppcoin: get transaction coin age
 
-    bool IsScammerAction() const;
+    bool IsBlacklistedAddrs(unsigned int) const;
 
 protected:
     const CTxOut& GetOutputFor(const CTxIn& input, const MapPrevTx& inputs) const;
@@ -942,14 +953,11 @@ public:
     unsigned int GetStakeEntropyBit(unsigned int nTime) const
     {
 
-        if (nTime >= ENTROPY_SWITCH_TIME || fTestNet)
-        {
-            // Take last bit of block hash as entropy bit
-            unsigned int nEntropyBit = ((GetHash().Get64()) & 1llu);
-            if (fDebug && GetBoolArg("-printstakemodifier"))
-                printf("GetStakeEntropyBit: nTime=%u hashBlock=%s nEntropyBit=%u\n", nTime, GetHash().ToString().c_str(), nEntropyBit);
-            return nEntropyBit;
-        }
+        // Take last bit of block hash as entropy bit
+        unsigned int nEntropyBit = ((GetHash().Get64()) & 1llu);
+        if (fDebug && GetBoolArg("-printstakemodifier"))
+            printf("GetStakeEntropyBit: nTime=%u hashBlock=%s nEntropyBit=%u\n", nTime, GetHash().ToString().c_str(), nEntropyBit);
+        return nEntropyBit;
 
         uint160 hashSig = Hash160(vchBlockSig);
         if (fDebug && GetBoolArg("-printstakemodifier"))
@@ -1121,7 +1129,7 @@ public:
     bool AcceptBlock();
     bool GetCoinAge(uint64& nCoinAge) const; // ppcoin: calculate total coin age spent in block
     bool SignBlock(const CKeyStore& keystore);
-    bool CheckBlockSignature(bool fProofOfStake) const;
+    bool CheckBlockSignature() const;
 
 private:
     bool SetBestChainInner(CTxDB& txdb, CBlockIndex *pindexNew);

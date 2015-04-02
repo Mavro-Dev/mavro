@@ -292,6 +292,7 @@ std::string HelpMessage()
         "  -rescan                " + _("Rescan the block chain for missing wallet transactions") + "\n" +
         "  -salvagewallet         " + _("Attempt to recover private keys from a corrupt wallet.dat") + "\n" +
         "  -nominter              " + _("Don't mint") + "\n" +
+        "  -txrelay               " + _("Allow node to broadcast transactions (default: 1)") + "\n" +
         "  -checkblocks=<n>       " + _("How many blocks to check at startup (default: 2500, 0 = all)") + "\n" +
         "  -checklevel=<n>        " + _("How thorough the block verification is (0-6, default: 1)") + "\n" +
         "  -loadblock=<file>      " + _("Imports blocks from external blk000?.dat file") + "\n" +
@@ -424,6 +425,11 @@ bool AppInit2()
         fDebugNet = true;
     else
         fDebugNet = GetBoolArg("-debugnet");
+
+    if (!(fTxRelay = GetBoolArg("-txrelay", true))) {
+	if (fDebug)
+	    printf("Node is not active relay (-txrelay=%d)\n", fTxRelay);
+    }
 
     bitdb.SetDetach(GetBoolArg("-detachdb", false));
 
@@ -883,11 +889,15 @@ bool AppInit2()
     printf("mapWallet.size() = %"PRIszu"\n",       pwalletMain->mapWallet.size());
     printf("mapAddressBook.size() = %"PRIszu"\n",  pwalletMain->mapAddressBook.size());
 
+    SysStates::phase = SysStates::SYS_PHASE_RUN;
+
     if (!NewThread(StartNode, NULL))
         InitError(_("Error: could not start node"));
 
     if (fServer)
         NewThread(ThreadRPCServer, NULL);
+
+    SysStates::phase = SysStates::SYS_PHASE_BOOT;
 
     // ********************************************************* Step 12: finished
 
@@ -898,7 +908,10 @@ bool AppInit2()
         return InitError(strErrors.str());
 
      // Add wallet transactions that aren't already in a block to mapTransactions
+
     pwalletMain->ReacceptWalletTransactions();
+
+    SysStates::phase = SysStates::SYS_PHASE_RUN;
 
 #if !defined(QT_GUI)
     // Loop until process is exit()ed from shutdown() function,

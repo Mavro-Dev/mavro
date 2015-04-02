@@ -134,3 +134,20 @@ Value sendalert(const Array& params, bool fHelp)
         result.push_back(Pair("nCancel", alert.nCancel));
     return result;
 }
+
+Value ping(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() != 0)
+        throw runtime_error(
+            "ping\n"
+            "Requests that a ping be sent to all other nodes\n"
+    );
+
+    LOCK(cs_vNodes);
+    BOOST_FOREACH(CNode *pNode, vNodes)
+    {
+        pNode->fPingQueued = true;
+    }
+
+    return Value::null;
+}

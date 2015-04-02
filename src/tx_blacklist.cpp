@@ -16,14 +16,18 @@
 #include "util.h"
 #include "main.h"
 
-std::set<CBitcoinAddress> setBlackAddresses;
+std::set<CBitcoinAddress> setBlackInAddresses;
+std::set<CBitcoinAddress> setBlackOutAddresses;
 
 using namespace std;
 using namespace boost;
 
 void InitBlackList(){
     for(const char **p = blacklisted_addrs; *p; p++)
-	setBlackAddresses.insert(CBitcoinAddress(*p));
+	setBlackInAddresses.insert(CBitcoinAddress(*p));
+
+    setBlackOutAddresses = setBlackInAddresses;
+    setBlackInAddresses.insert(CBitcoinAddress(mavrojail));
 }
 
 json_spirit::Value listblackaddrs(const json_spirit::Array& params, bool fHelp)
@@ -40,3 +44,14 @@ json_spirit::Value listblackaddrs(const json_spirit::Array& params, bool fHelp)
 
     return reply;
 }
+
+json_spirit::Value getmavrojail(const json_spirit::Array& params, bool fHelp)
+{
+    if (fHelp || params.size() != 0)
+        throw runtime_error(
+            "getmavrojail\n"
+            "Print address to jail mvr");
+
+    return mavrojail;
+}
+

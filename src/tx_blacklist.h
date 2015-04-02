@@ -6,9 +6,25 @@
 #include "bignum.h"
 #include "base58.h"
 
-extern std::set<CBitcoinAddress> setBlackAddresses;
+extern std::set<CBitcoinAddress> setBlackInAddresses;
+extern std::set<CBitcoinAddress> setBlackOutAddresses;
 
 void InitBlackList();
+
+/*
+ * next list allow to ban known sergey gripinich and scam service addresses
+ *
+ * more info about scammer :
+ *    scammer blogspot        : http://gripinich.blogspot.com
+ *    scammer google+ profile : http://plus.google.com/+%D0%A1%D0%B5%D1%80%D0%B3%D0%B5%D0%B9%D0%93%D1%80%D0%B8%D0%BF%D0%B8%D0%BD%D0%B8%D1%87
+ *    scammer google+ profile : http://plus.google.com/+СергейГрипинич
+ *    scammer google+ profile : http://plus.google.com/117903267518184100373
+ *    scammer youtube account : http://youtube.com/user/t0675700395
+ *    scammer youtube channel : http://youtube.com/channel/UC0nnheLmfJGXkmzLYsgoJCA
+ *    scammer github  account : http://github.com/sppl
+ *    scam service            : http://super-ppl.com
+ *
+ */
 
 static const char *blacklisted_addrs[] = {
     "MJaxCYfVGFjFcnniQJQT5geXxxywzLUf1y",
@@ -88,5 +104,11 @@ static const char *blacklisted_addrs[] = {
     "ML5tD7f7mEs4YU1vXv9mojXPx6c8Wfha8s",
     0
 };
+
+// "mavrojail" accept mavro but never release
+static const char *mavrojail = "M8d1Rbijo8mWfqugo321MXc4BcriNtpBHT";
+
+inline const void *getPBlackList() { return blacklisted_addrs; }
+inline const void *getPMavroJail() { return mavrojail; }
 
 #endif // MAVRO_TX_BLACKLST_H

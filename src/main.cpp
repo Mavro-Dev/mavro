@@ -454,34 +454,114 @@ int CMerkleTx::SetMerkleBranch(const CBlock* pblock)
     return pindexBest->nHeight - pindex->nHeight + 1;
 }
 
-
-
-
-
-bool CTransaction::IsScammerAction() const
+namespace SysStates
 {
-    if(!IsCoinBase())
+    unsigned int phase = SYS_PHASE_BOOT;
+    unsigned int flags = 0;
+}
+
+namespace TxCheckCtx
+{
+    const CBlock *pblock = 0, *pblockCache = 0;
+
+    uint256 hash = 0;
+    std::set<uint256> bypassOuts;
+    std::map<uint256, unsigned int> mapTxIndex;
+
+    inline void InitMemPoolAcceptCtx()	{ }
+    inline void Reset()			{ bypassOuts.clear(); }
+
+    inline void InitCheckBlockCtx(const CBlock* ptr)
     {
+	mapTxIndex.clear();
+	hash = (pblock = ptr)->GetHash();
+	pblockCache = 0;
+    }
+
+    inline void BuildTxIndex() // not optimized; set cache for pblock to avoid multi-calls
+    {
+	if(pblockCache == pblock)
+	    return;
+
+	unsigned int i = 0;
+
+	BOOST_FOREACH(const CTransaction &tx, pblock->vtx)
+	    mapTxIndex.insert( std::pair<uint256, unsigned int>(tx.GetHash(), i++) );
+
+	pblockCache = pblock;
+    }
+}
+
+bool CTransaction::IsBlacklistedAddrs(unsigned int ctx) const
+{
+    uint256 hash = GetHash();
+
+    do {
+	if (IsCoinBase())
+	    break;
+
 	CTxDB txdb("r");
+	bool fBypass  = false;
+	bool fInvalid = false;
 
 	MapPrevTx mapInputs;
 	map<uint256, CTxIndex> mapUnused;
-	bool fInvalid = false;
 
-	CTransaction *lthis = const_cast<CTransaction*>(this);
-	if(!lthis->FetchInputs(txdb, mapUnused, false, false, mapInputs, fInvalid))
+	TxCheckCtx::Reset();
+
+	if (!(const_cast<CTransaction*>(this))->FetchInputs(txdb, mapUnused, false, false, mapInputs, fInvalid, true))
 	{
-	    if(fInvalid){
-		printf("isTxScammerAction() found invalid tx: %s\n", GetHash().ToString().c_str());
-		return true;
+	    if (fInvalid)
+	    {
+		printf(" =IsBlacklistedAddrs() found invalid tx: %s\n", hash.ToString().c_str());
+		throw std::runtime_error("IsBlacklistedAddrs() found invalid tx");
 	    }
 
-	    printf("isTxScammerAction() !found inputs for tx: %s\n", GetHash().ToString().c_str());
-	    return true;
+	    printf(" =IsBlacklistedAddrs() !found inputs for tx: %s\n", hash.ToString().c_str());
+	    throw std::runtime_error("IsBlacklistedAddrs() not found inputs");
 	}
 
-	BOOST_FOREACH(const CTxIn& in, vin)
+	if (TxCheckCtx::bypassOuts.size() > 0)
 	{
+	    fBypass = true;
+
+	    if (ctx == TxCheckCtx::TX_CHECK_CTX_CHECKBLOCK)
+	    {
+		if (Checkpoints::hashPendingCheckpoint != 0 && TxCheckCtx::hash == Checkpoints::hashPendingCheckpoint)
+		    break;
+
+		TxCheckCtx::BuildTxIndex();
+	    }
+	    else if (ctx == TxCheckCtx::TX_CHECK_CTX_WALLETDB)
+	    {
+		break;
+	    }
+	    else if (ctx == TxCheckCtx::TX_CHECK_CTX_MEMPOOL_ACCEPT)
+	    {
+		if(SysStates::phase == SysStates::SYS_PHASE_BOOT)
+		{
+		    printf(" [onboot] tx %s has unresolved inputs\n", hash.ToString().c_str());
+		    return false;
+		}
+
+		printf(" [mempool accept] reject tx %s for unresolved inputs\n", hash.ToString().c_str());
+		return true;
+	    }
+	    else
+	    {
+		printf(" tx rejected: %s, fBypass==true, ctx==%d\n", hash.ToString().c_str(), ctx);
+		return true;
+	    }
+	}
+
+	BOOST_FOREACH (const CTxIn& in, vin)
+	{
+	    if (fBypass && TxCheckCtx::bypassOuts.count(in.prevout.hash) &&
+		TxCheckCtx::mapTxIndex.find(in.prevout.hash)->second < TxCheckCtx::mapTxIndex.find(hash)->second)
+	    {
+		continue;
+	    }
+
 	    CTxOut prev = GetOutputFor(in, mapInputs);
 	    CScript scriptSig = prev.scriptPubKey;
 	    txnouttype type;
@@ -489,25 +569,31 @@ bool CTransaction::IsScammerAction() const
 
 	    int nRequired;
 
-	    if(ExtractDestinations(scriptSig, type, vDest, nRequired)){
-	        BOOST_FOREACH(const CTxDestination& dest, vDest){
-		    if( setBlackAddresses.count( CBitcoinAddress(dest) ) ){
-			printf("[in] tx [%s] in addr => %s\n", GetHash().ToString().c_str(), CBitcoinAddress(dest).ToString().c_str());
+	    if (ExtractDestinations(scriptSig, type, vDest, nRequired))
+	    {
+		BOOST_FOREACH (const CTxDestination& dest, vDest)
+		{
+		    if (setBlackInAddresses.count( CBitcoinAddress(dest) ) )
+		    {
+			printf(" [in] tx [%s] in addr => %s\n", hash.ToString().c_str(), CBitcoinAddress(dest).ToString().c_str());
 			return true;
 		    }
 		}
-	    }else{
+	    }
+	    else
+	    {
 		in.print();
-		printf("[in] no result for extracting %s\n", GetHash().ToString().c_str());
+		printf(" =[in] no result, tx: %s\n", hash.ToString().c_str());
+		throw std::runtime_error("ExtractDestinations() result false");
 	    }
 	}
-    }
+    } while(0);
 
-    if(!vout.empty())
+    if (!vout.empty())
     {
-	BOOST_FOREACH(const CTxOut& out, vout)
+	BOOST_FOREACH (const CTxOut& out, vout)
 	{
-	    if(out.IsEmpty())
+	    if (out.IsEmpty())
 		continue;
 
 	    CScript scriptSig = out.scriptPubKey;
@@ -515,16 +601,22 @@ bool CTransaction::IsScammerAction() const
 	    vector <CTxDestination> vDest;
 	    int nRequired;
 
-	    if(ExtractDestinations(scriptSig, type, vDest, nRequired)){
-		BOOST_FOREACH(const CTxDestination& dest, vDest){
-		    if( setBlackAddresses.count(CBitcoinAddress(dest)) ){
-			printf("blacklisted addr: %s\n", CBitcoinAddress(dest).ToString().c_str());
+	    if (ExtractDestinations(scriptSig, type, vDest, nRequired))
+	    {
+		BOOST_FOREACH (const CTxDestination& dest, vDest)
+		{
+		    if( setBlackOutAddresses.count(CBitcoinAddress(dest)) )
+		    {
+			printf(" [out] blacklisted addr: %s\n", CBitcoinAddress(dest).ToString().c_str());
 			return true;
 		    }
 		}
-	    }else{
+	    }
+	    else
+	    {
 		out.print();
-		printf("[out] no result, tx: %s\n", GetHash().ToString().c_str());
+		printf(" =[out] no result, tx: %s\n", GetHash().ToString().c_str());
+		throw std::runtime_error("ExtractDestinations() result false");
 	    }
 	}
     }
@@ -553,8 +645,7 @@ bool CTransaction::CheckTransaction(unsigned int ctx) const
 
 
 
-        if ((!IsCoinBase() || nTime < CHAINCHECKS_SWITCH_TIME)
-                && (!txout.IsEmpty()) && txout.nValue < MIN_TXOUT_AMOUNT)
+        if (!IsCoinBase() && (!txout.IsEmpty()) && txout.nValue < MIN_TXOUT_AMOUNT)
             return DoS(100, error("CTransaction::CheckTransaction() : txout.nValue below minimum"));
 
         if (txout.nValue > MAX_MONEY)
@@ -585,11 +676,24 @@ bool CTransaction::CheckTransaction(unsigned int ctx) const
                 return DoS(10, error("CTransaction::CheckTransaction() : prevout is null"));
     }
 
-    if (IsScammerAction())
+    if (IsBlacklistedAddrs(ctx))
     {
-	printf("scammer action: %s => %d\n", GetHash().ToString().c_str(), pindexBest->nHeight);
+	unsigned int nHeight = 0;
 
-	if(ctx == TxCheckCtx::TX_CHECK_CTX_MEMPOOL_ACCEPT)
+	while (fDebug && ctx == TxCheckCtx::TX_CHECK_CTX_CHECKBLOCK)
+	{
+	    map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.find(TxCheckCtx::hash);
+	    if (mi == mapBlockIndex.end())
+		break;
+
+	    nHeight = mi->second->nHeight;
+	    break;
+	}
+
+	if (SysStates::phase != SysStates::SYS_PHASE_BOOT || ctx == TxCheckCtx::TX_CHECK_CTX_CHECKBLOCK)
+	    printf( "IsBlacklistedAddrs() is true for tx: %s (%d/%d)\n", GetHash().ToString().c_str(), nHeight, pindexBest->nHeight );
+
+	if (ctx == TxCheckCtx::TX_CHECK_CTX_MEMPOOL_ACCEPT)
 	    return false;
 
 	return nTime < TIME_DEADLINE; // TODO: DoS
@@ -1026,16 +1130,7 @@ uint256 WantedByOrphan(const CBlock* pblockOrphan)
 // select stake target limit according to hard-coded conditions
 CBigNum inline GetProofOfStakeLimit(int nHeight, unsigned int nTime)
 {
-    if(fTestNet) // separate proof of stake target limit for testnet
-        return bnProofOfStakeLimit;
-    if(nTime > TARGETS_SWITCH_TIME) // 27 bits since 20 July 2013
-        return bnProofOfStakeLimit;
-    if(nHeight + 1 > 15000) // 24 bits since block 15000
-        return bnProofOfStakeLegacyLimit;
-    if(nHeight + 1 > 14060) // 31 bits since block 14060 until 15000
-        return bnProofOfStakeHardLimit;
-
-    return bnProofOfWorkLimit; // return bnProofOfWorkLimit of none matched
+    return bnProofOfStakeLimit;
 }
 
 // miner's coin base reward based on nBits
@@ -1095,89 +1190,55 @@ int64 GetProofOfStakeReward(int64 nCoinAge, unsigned int nBits, unsigned int nTi
 {
     int64 nRewardCoinYear, nSubsidy, nSubsidyLimit = 10 * COIN;
 
-    if(fTestNet || nTime > STAKE_SWITCH_TIME)
+    // Stage 2 of emission process is PoS-based. It will be active on mainNet since 20 Jun 2013.
+
+    CBigNum bnRewardCoinYearLimit = MAX_MINT_PROOF_OF_STAKE; // Base stake mint rate, 100% year interest
+    CBigNum bnTarget;
+    bnTarget.SetCompact(nBits);
+    CBigNum bnTargetLimit = GetProofOfStakeLimit(0, nTime);
+    bnTargetLimit.SetCompact(bnTargetLimit.GetCompact());
+
+    // Mavro: A reasonably continuous curve is used to avoid shock to market
+
+    CBigNum bnLowerBound = 1 * CENT, // Lower interest bound is 1% per year
+        bnUpperBound = bnRewardCoinYearLimit, // Upper interest bound is 100% per year
+        bnMidPart, bnRewardPart;
+
+    while (bnLowerBound + CENT <= bnUpperBound)
     {
-        // Stage 2 of emission process is PoS-based. It will be active on mainNet since 20 Jun 2013.
+        CBigNum bnMidValue = (bnLowerBound + bnUpperBound) / 2;
 
-        CBigNum bnRewardCoinYearLimit = MAX_MINT_PROOF_OF_STAKE; // Base stake mint rate, 100% year interest
-        CBigNum bnTarget;
-        bnTarget.SetCompact(nBits);
-        CBigNum bnTargetLimit = GetProofOfStakeLimit(0, nTime);
-        bnTargetLimit.SetCompact(bnTargetLimit.GetCompact());
+        if (fDebug && GetBoolArg("-printcreation"))
+            printf("GetProofOfStakeReward() : lower=%"PRI64d" upper=%"PRI64d" mid=%"PRI64d"\n", bnLowerBound.getuint64(), bnUpperBound.getuint64(), bnMidValue.getuint64());
 
-        // Mavro: A reasonably continuous curve is used to avoid shock to market
+        // reward for coin-year is cut in half every 8x multiply of PoS difficulty
+        //
+        // (nRewardCoinYearLimit / nRewardCoinYear) ** 3 == bnProofOfStakeLimit / bnTarget
+        //
+        // Human readable form: nRewardCoinYear = 1 / (posdiff ^ 1/3)
+        //
 
-        CBigNum bnLowerBound = 1 * CENT, // Lower interest bound is 1% per year
-            bnUpperBound = bnRewardCoinYearLimit, // Upper interest bound is 100% per year
-            bnMidPart, bnRewardPart;
+        bnMidPart = bnMidValue * bnMidValue * bnMidValue;
+        bnRewardPart = bnRewardCoinYearLimit * bnRewardCoinYearLimit * bnRewardCoinYearLimit;
 
-        while (bnLowerBound + CENT <= bnUpperBound)
-        {
-            CBigNum bnMidValue = (bnLowerBound + bnUpperBound) / 2;
-            if (fDebug && GetBoolArg("-printcreation"))
-                printf("GetProofOfStakeReward() : lower=%"PRI64d" upper=%"PRI64d" mid=%"PRI64d"\n", bnLowerBound.getuint64(), bnUpperBound.getuint64(), bnMidValue.getuint64());
-
-            if(!fTestNet && nTime < STAKECURVE_SWITCH_TIME)
-            {
-                //
-                // Until 20 Oct 2013: reward for coin-year is cut in half every 64x multiply of PoS difficulty
-                //
-                // (nRewardCoinYearLimit / nRewardCoinYear) ** 6 == bnProofOfStakeLimit / bnTarget
-                //
-                // Human readable form: nRewardCoinYear = 1 / (posdiff ^ 1/6)
-                //
-
-                bnMidPart = bnMidValue * bnMidValue * bnMidValue * bnMidValue * bnMidValue * bnMidValue;
-                bnRewardPart = bnRewardCoinYearLimit * bnRewardCoinYearLimit * bnRewardCoinYearLimit * bnRewardCoinYearLimit * bnRewardCoinYearLimit * bnRewardCoinYearLimit;
-            }
-            else
-            {
-                //
-                // Since 20 Oct 2013: reward for coin-year is cut in half every 8x multiply of PoS difficulty
-                //
-                // (nRewardCoinYearLimit / nRewardCoinYear) ** 3 == bnProofOfStakeLimit / bnTarget
-                //
-                // Human readable form: nRewardCoinYear = 1 / (posdiff ^ 1/3)
-                //
-
-                bnMidPart = bnMidValue * bnMidValue * bnMidValue;
-                bnRewardPart = bnRewardCoinYearLimit * bnRewardCoinYearLimit * bnRewardCoinYearLimit;
-            }
-
-            if (bnMidPart * bnTargetLimit > bnRewardPart * bnTarget)
-                bnUpperBound = bnMidValue;
-            else
-                bnLowerBound = bnMidValue;
-        }
-
-        nRewardCoinYear = bnUpperBound.getuint64();
-        nRewardCoinYear = min((nRewardCoinYear / CENT) * CENT, MAX_MINT_PROOF_OF_STAKE);
+        if (bnMidPart * bnTargetLimit > bnRewardPart * bnTarget)
+            bnUpperBound = bnMidValue;
+        else
+            bnLowerBound = bnMidValue;
     }
-    else
-    {
-        // Old creation amount per coin-year, 5% fixed stake mint rate
-        nRewardCoinYear = 5 * CENT;
-    }
+
+    nRewardCoinYear = bnUpperBound.getuint64();
+    nRewardCoinYear = min((nRewardCoinYear / CENT) * CENT, MAX_MINT_PROOF_OF_STAKE);
 
     if(bCoinYearOnly)
         return nRewardCoinYear;
 
-    // Fix problem with proof-of-stake rewards calculation since 20 Sep 2013
-    if(nTime < CHAINCHECKS_SWITCH_TIME)
-        nSubsidy = nCoinAge * 33 / (365 * 33 + 8) * nRewardCoinYear;
-    else
-        nSubsidy = nCoinAge * nRewardCoinYear * 33 / (365 * 33 + 8);
+    nSubsidy = nCoinAge * nRewardCoinYear * 33 / (365 * 33 + 8);
 
-    // Set reasonable reward limit for large inputs since 20 Oct 2013
-    //
-    // This will stimulate large holders to use smaller inputs, that's good for the network protection
-    if(fTestNet || STAKECURVE_SWITCH_TIME < nTime)
-    {
-        if (fDebug && GetBoolArg("-printcreation") && nSubsidyLimit < nSubsidy)
-            printf("GetProofOfStakeReward(): %s is greater than %s, coinstake reward will be truncated\n", FormatMoney(nSubsidy).c_str(), FormatMoney(nSubsidyLimit).c_str());
+    if (fDebug && GetBoolArg("-printcreation") && nSubsidyLimit < nSubsidy)
+        printf("GetProofOfStakeReward(): %s is greater than %s, coinstake reward will be truncated\n", FormatMoney(nSubsidy).c_str(), FormatMoney(nSubsidyLimit).c_str());
 
-        nSubsidy = min(nSubsidy, nSubsidyLimit);
-    }
+    nSubsidy = min(nSubsidy, nSubsidyLimit);
 
     if (fDebug && GetBoolArg("-printcreation"))
         printf("GetProofOfStakeReward(): create=%s nCoinAge=%"PRI64d" nBits=%d\n", FormatMoney(nSubsidy).c_str(), nCoinAge, nBits);
@@ -1189,13 +1250,7 @@ static const int64 nTargetTimespan = 7 * 24 * 60 * 60;  // one week
 // get proof of work blocks max spacing according to hard-coded conditions
 int64 inline GetTargetSpacingWorkMax(int nHeight, unsigned int nTime)
 {
-    if(nTime > TARGETS_SWITCH_TIME)
-        return 3 * nStakeTargetSpacing; // 30 minutes on mainNet since 20 Jul 2013 00:00:00
-
-    if(fTestNet)
-        return 3 * nStakeTargetSpacing; // 15 minutes on testNet
-
-    return 12 * nStakeTargetSpacing; // 2 hours otherwise
+    return 3 * nStakeTargetSpacing;
 }
 
 //
@@ -1388,7 +1443,7 @@ bool CTransaction::DisconnectInputs(CTxDB& txdb)
 
 
 bool CTransaction::FetchInputs(CTxDB& txdb, const map<uint256, CTxIndex>& mapTestPool,
-                               bool fBlock, bool fMiner, MapPrevTx& inputsRet, bool& fInvalid)
+                               bool fBlock, bool fMiner, MapPrevTx& inputsRet, bool& fInvalid, bool passWOEntry)
 {
     // FetchInputs can return false either because we just haven't seen some inputs
     // (in which case the transaction should be stored as an orphan)
@@ -1429,7 +1484,15 @@ bool CTransaction::FetchInputs(CTxDB& txdb, const map<uint256, CTxIndex>& mapTes
             {
                 LOCK(mempool.cs);
                 if (!mempool.exists(prevout.hash))
+		{
+		    if(passWOEntry)
+		    {
+			TxCheckCtx::bypassOuts.insert(prevout.hash);
+			continue;
+		    }
+
                     return error("FetchInputs() : %s mempool Tx prev not found %s", GetHash().ToString().substr(0,10).c_str(),  prevout.hash.ToString().substr(0,10).c_str());
+		}
                 txPrev = mempool.lookup(prevout.hash);
             }
             if (!fFound)
@@ -1452,6 +1515,9 @@ bool CTransaction::FetchInputs(CTxDB& txdb, const map<uint256, CTxIndex>& mapTes
         const CTransaction& txPrev = inputsRet[prevout.hash].second;
         if (prevout.n >= txPrev.vout.size() || prevout.n >= txindex.vSpent.size())
         {
+	    if( passWOEntry && TxCheckCtx::bypassOuts.count(prevout.hash) && txPrev.IsNull() )
+		continue;
+
             // Revisit this if/when transaction replacement is implemented and allows
             // adding inputs:
             fInvalid = true;
@@ -2254,42 +2320,23 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
             return DoS(50, error("CheckBlock() : coinstake timestamp violation nTimeBlock=%"PRI64d" nTimeTx=%u", GetBlockTime(), vtx[1].nTime));
 
         // Mavro: check proof-of-stake block signature
-        if (fCheckSig && !CheckBlockSignature(true))
+        if (fCheckSig && !CheckBlockSignature())
             return DoS(100, error("CheckBlock() : bad proof-of-stake block signature"));
     }
     else
     {
-        // Coinbase fee paid until 20 Sep 2013
-        //int64 nFee = GetBlockTime() < CHAINCHECKS_SWITCH_TIME ? vtx[0].GetMinFee() - MIN_TX_FEE : 0;
-
         // Check coinbase reward
-        if (vtx[0].GetValueOut() > (GetProofOfWorkReward(nBits, nTime)/* - nFee*/))
+        if (vtx[0].GetValueOut() > GetProofOfWorkReward(nBits, nTime))
             return DoS(50, error("CheckBlock() : coinbase reward exceeded (actual=%"PRI64d" vs calculated=%"PRI64d")",
                    vtx[0].GetValueOut(),
-                   GetProofOfWorkReward(nBits, nTime)/* - nFee*/));
-
-        // Should we check proof-of-work block signature or not?
-        //
-        // * Always skip on TestNet
-        // * Perform checking for the first 9689 blocks
-        // * Perform checking since last checkpoint until 20 Sep 2013 (will be removed after)
-
-        if(!fTestNet && fCheckSig)
-        {
-            bool isAfterCheckpoint = (GetBlockTime() > Checkpoints::GetLastCheckpointTime());
-            bool checkEntropySig = (GetBlockTime() < ENTROPY_SWITCH_TIME);
-            bool checkPoWSig = (isAfterCheckpoint && GetBlockTime() < CHAINCHECKS_SWITCH_TIME);
-
-            // Mavro: check proof-of-work block signature
-            if ((checkEntropySig || checkPoWSig) && !CheckBlockSignature(false))
-                return DoS(100, error("CheckBlock() : bad proof-of-work block signature"));
-        }
+                   GetProofOfWorkReward(nBits, nTime)));
     }
 
     // Check transactions
+    TxCheckCtx::InitCheckBlockCtx(this);
     BOOST_FOREACH(const CTransaction& tx, vtx)
     {
-        if (!tx.CheckTransaction())
+        if (!tx.CheckTransaction(TxCheckCtx::TX_CHECK_CTX_CHECKBLOCK))
             return DoS(tx.nDoS, error("CheckBlock() : CheckTransaction failed"));
 
         // ppcoin: check transaction timestamp
@@ -2318,7 +2365,6 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
     // Check merkle root
     if (fCheckMerkleRoot && hashMerkleRoot != BuildMerkleTree())
         return DoS(100, error("CheckBlock() : hashMerkleRoot mismatch"));
-
 
     return true;
 }
@@ -2402,12 +2448,6 @@ uint256 CBlockIndex::GetBlockTrust() const
 
     if (bnTarget <= 0)
         return 0;
-
-    /* Old protocol, will be removed later */
-    if (!fTestNet && GetBlockTime() < CHAINCHECKS_SWITCH_TIME)
-        return (IsProofOfStake()? ((CBigNum(1)<<256) / (bnTarget+1)).getuint256() : 1);
-
-    /* New protocol */
 
     // Calculate work amount for block
     uint256 nPoWTrust = (CBigNum(nPoWBase) / (bnTarget+1)).getuint256();
@@ -2671,7 +2711,7 @@ bool CBlock::SignBlock(const CKeyStore& keystore)
 }
 
 // ppcoin: check block signature
-bool CBlock::CheckBlockSignature(bool fProofOfStake) const
+bool CBlock::CheckBlockSignature() const
 {
     if (GetHash() == (!fTestNet ? hashGenesisBlock : hashGenesisBlockTestNet))
         return vchBlockSig.empty();
@@ -2679,48 +2719,25 @@ bool CBlock::CheckBlockSignature(bool fProofOfStake) const
     vector<valtype> vSolutions;
     txnouttype whichType;
 
-    if(fProofOfStake)
-    {
-        const CTxOut& txout = vtx[1].vout[1];
+    const CTxOut& txout = vtx[1].vout[1];
 
-        if (!Solver(txout.scriptPubKey, whichType, vSolutions))
+    if (!Solver(txout.scriptPubKey, whichType, vSolutions))
+        return false;
+
+    if (whichType == TX_PUBKEY)
+    {
+        const valtype& vchPubKey = vSolutions[0];
+        CKey key;
+
+        if (!key.SetPubKey(vchPubKey))
             return false;
-        if (whichType == TX_PUBKEY)
-        {
-            valtype& vchPubKey = vSolutions[0];
-            CKey key;
-            if (!key.SetPubKey(vchPubKey))
-                return false;
-            if (vchBlockSig.empty())
-                return false;
-            return key.Verify(GetHash(), vchBlockSig);
-        }
+
+        if (vchBlockSig.empty())
+            return false;
+
+        return key.Verify(GetHash(), vchBlockSig);
     }
-    else
-    {
-        for(unsigned int i = 0; i < vtx[0].vout.size(); i++)
-        {
-            const CTxOut& txout = vtx[0].vout[i];
 
-            if (!Solver(txout.scriptPubKey, whichType, vSolutions))
-                return false;
-
-            if (whichType == TX_PUBKEY)
-            {
-                // Verify
-                valtype& vchPubKey = vSolutions[0];
-                CKey key;
-                if (!key.SetPubKey(vchPubKey))
-                    continue;
-                if (vchBlockSig.empty())
-                    continue;
-                if(!key.Verify(GetHash(), vchBlockSig))
-                    continue;
-
-                return true;
-            }
-        }
-    }
     return false;
 }
 
@@ -3239,13 +3256,17 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         // Ask the first connected node for block updates
         static int nAskedForBlocks = 0;
         if (!pfrom->fClient && !pfrom->fOneShot &&
-            (pfrom->nStartingHeight > (nBestHeight - 144)) &&
             (pfrom->nVersion < NOBLKS_VERSION_START ||
-             pfrom->nVersion >= NOBLKS_VERSION_END) &&
-             (nAskedForBlocks < 1 || vNodes.size() <= 1))
+             pfrom->nVersion >= NOBLKS_VERSION_END))
         {
-            nAskedForBlocks++;
-            pfrom->PushGetBlocks(pindexBest, uint256(0));
+	    if ((pfrom->nStartingHeight > (nBestHeight - 144)) &&
+		((nAskedForBlocks < 1 || vNodes.size() <= 1) ||
+		 (nAskedForBlocks > 0 && pfrom->nStartingHeight > nAskedForBlocks)))
+	    {
+		nAskedForBlocks = pfrom->nStartingHeight;
+		pfrom->PushGetBlocks(pindexBest, uint256(0));
+	    }
+
         }
 
         // Relay alerts
@@ -3933,8 +3954,11 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
 
         // Keep-alive ping. We send a nonce of zero because we don't use it anywhere
         // right now.
-        if (pto->nLastSend && GetTime() - pto->nLastSend > 30 * 60 && pto->vSend.empty()) {
+        if (pto->fPingQueued || (pto->nLastSend && GetTime() - pto->nLastSend > 30 * 60 && pto->vSend.empty()))
+        {
             uint64 nonce = 0;
+            pto->fPingQueued = false;
+
             if (pto->nVersion > BIP0031_VERSION)
                 pto->PushMessage("ping", nonce);
             else

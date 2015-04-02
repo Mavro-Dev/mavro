@@ -899,6 +899,14 @@ void CWallet::ReacceptWalletTransactions()
 
 void CWalletTx::RelayWalletTransaction(CTxDB& txdb)
 {
+    if (!fTxRelay)
+    {
+	if (fDebug)
+	    printf("RelayWalletTransaction() isn't allowed (txrelay=0)\n");
+
+	return;
+    }
+
     BOOST_FOREACH(const CMerkleTx& tx, vtxPrev)
     {
         if (!(tx.IsCoinBase() || tx.IsCoinStake()))
@@ -942,6 +950,14 @@ void CWallet::ResendWalletTransactions()
     if (nTimeBestReceived < nLastTime)
         return;
     nLastTime = GetTime();
+
+    if (!fTxRelay)
+    {
+	if (fDebug)
+	    printf("ResendWalletTransactions() isn't allowed (txrelay=0)\n");
+
+	return;
+    }
 
     // Rebroadcast any of our txes that aren't in a block yet
     printf("ResendWalletTransactions()\n");

@@ -44,6 +44,7 @@ namespace Checkpoints
     int GetLastCheckpointTime();
 
     extern uint256 hashSyncCheckpoint;
+    extern uint256 hashPendingCheckpoint;
     extern CSyncCheckpoint checkpointMessage;
     extern uint256 hashInvalidCheckpoint;
     extern CCriticalSection cs_hashSyncCheckpoint;

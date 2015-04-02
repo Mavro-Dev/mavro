@@ -6,8 +6,12 @@
 #define BITCOIN_NET_H
 
 #include <deque>
+
+#ifndef Q_MOC_RUN
 #include <boost/array.hpp>
 #include <boost/foreach.hpp>
+#endif
+
 #include <openssl/rand.h>
 
 #ifndef WIN32
@@ -177,6 +181,7 @@ public:
     bool fNetworkNode;
     bool fSuccessfullyConnected;
     bool fDisconnect;
+    bool fPingQueued;
     CSemaphoreGrant grantOutbound;
 protected:
     int nRefCount;
@@ -229,6 +234,7 @@ public:
         fNetworkNode = false;
         fSuccessfullyConnected = false;
         fDisconnect = false;
+        fPingQueued = false;
         nRefCount = 0;
         nReleaseTime = 0;
         hashContinue = 0;
